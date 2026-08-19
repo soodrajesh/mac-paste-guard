@@ -192,6 +192,13 @@ Honest list of what a POC does not yet do:
   isn't checked. Robust detection would need a browser extension, which breaks the "no extra
   surface" property — a deliberate trade for now.
 - **Drag-and-drop and right-click → Paste bypass the tap entirely.** Only ⌘V is intercepted.
+- **Terminal-based AI agents aren't a recognised surface.** `AISurfaces.swift` only arms on a
+  native-app allowlist or a browser tab title — a terminal running Claude Code, Aider, or any CLI
+  agent is neither, so a real key pasted there goes straight through unchecked. Confirmed live: a
+  key pasted into this project's own Claude Code session wasn't caught, and re-running it through
+  the detector directly confirmed the *pattern* is fine — the paste simply never reached the tap's
+  scope. Likely at least as common a leak as a browser chat for a developer audience, and currently
+  the biggest scoping gap, ahead of screenshots.
 - **Text only.** A screenshot of a customer record pasted into Claude is not inspected. This is the
   biggest real-world hole, and the one where `mac-ocr`'s Vision pipeline would slot in directly.
 - **No policy layer.** Detectors are compile-time constants. Per-org allowlists, custom patterns
