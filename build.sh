@@ -105,11 +105,20 @@ SOURCES=$(find Sources -name '*.swift')
 swiftc -O -o "$APP/Contents/MacOS/$BIN" $SOURCES \
   -framework AppKit -framework CoreGraphics -framework ApplicationServices -framework IOKit
 
-# Ad-hoc sign so macOS treats rebuilds as the same app identity. NOTE: ad-hoc
-# signatures still change across machines, so Accessibility and Input
-# Monitoring may need re-granting after a rebuild. A Developer ID identity
-# fixes that permanently — see README.
-codesign --force --deep --sign - "$APP"
+# Sign with a stable local identity so macOS treats rebuilds as the same app.
+# An ad-hoc signature (--sign -) is just a hash of the raw binary with no
+# identity string, so the CDHash — and any TCC grant keyed to it — changes on
+# every rebuild. The app keeps its row in System Settings with the toggle
+# still on, but AXIsProcessTrusted() returns false and the tap never arms:
+# protection that looks enabled while checking nothing. Falls back to ad-hoc
+# with a warning if the cert hasn't been created yet.
+SIGN_IDENTITY="PasteGuard Local Dev"
+if ! security find-certificate -c "$SIGN_IDENTITY" -a login.keychain-db >/dev/null 2>&1; then
+    echo "WARN: no local signing cert — falling back to ad-hoc. Permissions will"
+    echo "      need re-granting after every rebuild. Run ./setup-signing.sh once."
+    SIGN_IDENTITY="-"
+fi
+codesign --force --deep --sign "$SIGN_IDENTITY" "$APP"
 
 echo "Built $APP"
 

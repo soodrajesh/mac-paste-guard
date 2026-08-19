@@ -60,11 +60,28 @@ health data, and no US-built DLP tool ships it.
 ## Install
 
 ```bash
-./build.sh        # compiles, runs tests, signs, installs to /Applications
+./setup-signing.sh   # one-time: creates a stable local signing identity
+./build.sh           # compiles, runs tests, signs, installs to /Applications
 open /Applications/PasteGuard.app
 ```
 
 Requires macOS 13+. No dependencies, no package manager, no Xcode project — just `swiftc`.
+
+**Why `setup-signing.sh` is not optional here.** Ad-hoc signing (`codesign --sign -`) embeds no
+identity, only a hash of the raw binary, so every rebuild produces a different CDHash and macOS
+silently drops any TCC grant keyed to it. The symptom is nasty and specific to a tool like this:
+PasteGuard keeps its row in System Settings → Accessibility **with the toggle still on**, while
+`AXIsProcessTrusted()` returns false and the event tap never arms. Protection appears enabled while
+nothing is being checked. `setup-signing.sh` creates a self-signed certificate once and trusts it
+for the `codeSign` policy only; `build.sh` then signs with that stable identity. Skip it and
+`build.sh` falls back to ad-hoc with a warning.
+
+If grants do get stranded after a rebuild, clear them and re-grant:
+
+```bash
+tccutil reset Accessibility com.rajeshsood.pasteguard
+tccutil reset ListenEvent   com.rajeshsood.pasteguard
+```
 
 ### Permissions
 
@@ -126,9 +143,10 @@ To sanity-check detection against your own real data without staging a paste: co
 
 Honest list of what a POC does not yet do:
 
-- **Ad-hoc code signature.** Rebuilds can invalidate the TCC grants, meaning Accessibility and
-  Input Monitoring need re-granting. A Developer ID identity fixes this permanently and is the
-  first thing to do before anyone else installs it.
+- **Self-signed identity, not Developer ID.** `setup-signing.sh` keeps grants stable on *your*
+  machine, but the app is still unsigned as far as Gatekeeper is concerned — anyone else installing
+  it hits the unidentified-developer warning. A real Developer ID certificate plus notarisation is
+  required before distributing this to anyone.
 - **Browser detection is title-based.** If a tab's title doesn't contain a known marker, the paste
   isn't checked. Robust detection would need a browser extension, which breaks the "no extra
   surface" property — a deliberate trade for now.
