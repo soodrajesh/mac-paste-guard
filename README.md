@@ -19,8 +19,49 @@ Foundation — no networking framework is present.
 
 ## Status
 
-Proof of concept. The detection core is covered by 49 tests; the interception path works but has
-had limited real-world use. See [Known gaps](#known-gaps).
+Proof of concept, running. Detection core covered by 49 tests. Signed with a stable local identity
+(see [Install](#install)) so Accessibility and Input Monitoring grants survive rebuilds; both are
+granted on the dev machine and the menubar shows a solid shield. Live interception — actually
+catching a real ⌘V into an AI app — has not yet been exercised end to end. See [Known gaps](#known-gaps).
+
+## What to expect, day to day
+
+**Nothing, almost all the time.** PasteGuard only ever looks at a paste if two things are both
+true: the frontmost app is a recognised AI surface (Claude, ChatGPT, Cursor, Copilot, or a browser
+tab whose title mentions one), *and* the clipboard matches one of the detectors below. Pasting into
+Mail, Slack, a code editor, a terminal — none of that is touched. There's no ongoing scan, no
+background clipboard history, nothing running except the tap waiting for ⌘V.
+
+**When a paste is flagged**, ⌘V does nothing visible for a moment, then a small panel appears
+in front of whatever you're in:
+
+```
+Paste blocked
+2 critical, 1 high found in what you're pasting into Claude.
+
+● AWS access key ID          Critical
+● Private key                Critical
+● IBAN                       High
+
+Nothing has left this Mac. PasteGuard makes no network connections.
+
+[Cancel]  [Paste Original]  [Redact & Paste]
+```
+
+- **Redact & Paste** (default, ⏎) — pastes a cleaned version with the sensitive spans replaced
+  (`[AWS KEY AKIA…REDACTED]`, `**** **** **** 1111`, etc.), the rest of your text untouched. Your
+  clipboard itself is restored right after, so what you copied is still what you'd get from a
+  normal ⌘V elsewhere.
+- **Paste Original** — sends it through unredacted anyway. For the false positives that will
+  happen — a long invoice number that happens to pass Luhn, a `password:` in a paragraph *about*
+  passwords, not one.
+- **Cancel** (Esc) — nothing is pasted.
+
+Every decision is logged locally (see [Audit log](#audit-log)) — never the pasted text itself, just
+what kind of thing was found and what you chose.
+
+**What it will not catch:** a screenshot, drag-and-drop, or right-click → Paste — only a literal
+⌘V keystroke is intercepted. See [Known gaps](#known-gaps) for the rest.
 
 ## Why this exists
 
