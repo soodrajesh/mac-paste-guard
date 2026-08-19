@@ -70,11 +70,39 @@ enum AuditLog {
         }
     }
 
+    /// Menu bytes to read from the tail of the file, not the whole thing.
+    /// `menuNeedsUpdate` calls this on the main thread every time the
+    /// menubar icon is clicked, and the log has no rotation — over months of
+    /// daily use it would otherwise mean parsing an ever-growing file on
+    /// every click. Each line is well under 300 bytes, so this comfortably
+    /// covers hundreds of entries regardless of how large the file has grown.
+    private static let tailReadBytes = 64 * 1024
+
     static func recentEntries(limit: Int = 20) -> [Entry] {
-        guard let contents = try? String(contentsOf: fileURL, encoding: .utf8) else { return [] }
+        guard let handle = try? FileHandle(forReadingFrom: fileURL) else { return [] }
+        defer { try? handle.close() }
+
+        guard let fileSize = try? handle.seekToEnd() else { return [] }
+        let readSize = min(fileSize, UInt64(tailReadBytes))
+        guard readSize > 0 else { return [] }
+
+        do {
+            try handle.seek(toOffset: fileSize - readSize)
+        } catch {
+            return []
+        }
+        guard let chunk = try? handle.readToEnd(), let contents = String(data: chunk, encoding: .utf8) else {
+            return []
+        }
+
+        // The read may start mid-line if it didn't happen to land on a file
+        // boundary; drop that leading partial line rather than fail to parse
+        // a truncated entry.
+        var lines = contents.split(separator: "\n", omittingEmptySubsequences: true)
+        if readSize < fileSize, !lines.isEmpty { lines.removeFirst() }
+
         let decoder = JSONDecoder()
-        return contents
-            .split(separator: "\n")
+        return lines
             .suffix(limit)
             .compactMap { try? decoder.decode(Entry.self, from: Data($0.utf8)) }
             .reversed()

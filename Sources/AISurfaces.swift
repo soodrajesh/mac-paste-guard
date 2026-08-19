@@ -75,8 +75,19 @@ enum AISurfaces {
         guard AXUIElementCopyAttributeValue(element, kAXFocusedWindowAttribute as CFString, &windowRef) == .success,
               let window = windowRef else { return nil }
 
+        // AXUIElement is an opaque CF type with no Swift-visible dynamic cast,
+        // so the previous `as! AXUIElement` trusted the Accessibility API's
+        // contract unconditionally. That contract isn't enforced by the type
+        // system, and a nonconforming AX implementation returning something
+        // else would crash the whole app — taking paste protection down with
+        // it — instead of just skipping this one check. CFGetTypeID is the
+        // actual runtime check; unsafeBitCast only reinterprets the pointer
+        // after it has passed.
+        guard CFGetTypeID(window) == AXUIElementGetTypeID() else { return nil }
+        let windowElement = unsafeBitCast(window, to: AXUIElement.self)
+
         var titleRef: CFTypeRef?
-        guard AXUIElementCopyAttributeValue(window as! AXUIElement, kAXTitleAttribute as CFString, &titleRef) == .success,
+        guard AXUIElementCopyAttributeValue(windowElement, kAXTitleAttribute as CFString, &titleRef) == .success,
               let title = titleRef as? String else { return nil }
 
         return title

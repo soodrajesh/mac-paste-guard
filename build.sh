@@ -112,16 +112,9 @@ swiftc -O -o "$APP/Contents/MacOS/$BIN" $SOURCES \
 # still on, but AXIsProcessTrusted() returns false and the tap never arms:
 # protection that looks enabled while checking nothing. Falls back to ad-hoc
 # with a warning if the cert hasn't been created yet.
-#
-# The check is `find-identity -v -p codesigning`, not `find-certificate -a`:
-# the latter exits 0 even with zero matches (an empty "find all" result is not
-# an error), so it silently passes when no cert exists and codesign then fails
-# with "no identity found" — aborting the build under `set -e` before anything
-# is installed. `find-identity -v` also asks the right question: not "does a
-# certificate exist" but "is there a *valid* signing identity", which is what
-# the trust step in setup-signing.sh actually produces.
-SIGN_IDENTITY="PasteGuard Local Dev"
-if ! security find-identity -v -p codesigning 2>/dev/null | grep -qF "$SIGN_IDENTITY"; then
+source "$(dirname "$0")/signing-common.sh"
+SIGN_IDENTITY="$SIGN_IDENTITY_NAME"
+if ! has_valid_signing_identity; then
     echo "WARN: no local signing cert — falling back to ad-hoc. Permissions will"
     echo "      need re-granting after every rebuild. Run ./setup-signing.sh once."
     SIGN_IDENTITY="-"

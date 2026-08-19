@@ -14,15 +14,11 @@ set -euo pipefail
 #
 # Safe to re-run — skips creation if the cert already exists.
 
-IDENTITY="PasteGuard Local Dev"
+source "$(dirname "$0")/signing-common.sh"
+IDENTITY="$SIGN_IDENTITY_NAME"
 KEYCHAIN=~/Library/Keychains/login.keychain-db
 
-# The real question is whether a *valid signing identity* exists, not whether
-# some certificate is sitting in the keychain. Note that
-# `security find-certificate -a` exits 0 even when it matches nothing — an
-# empty "find all" is not an error — so guarding on its exit code makes this
-# script claim the identity already exists and do nothing, forever.
-if security find-identity -v -p codesigning 2>/dev/null | grep -qF "$IDENTITY"; then
+if has_valid_signing_identity; then
     echo "✓ '$IDENTITY' is already a valid signing identity — nothing to do."
     exit 0
 fi
@@ -38,7 +34,7 @@ if [ -n "$EXISTING" ]; then
     echo "Certificate exists but is not a valid signing identity — re-applying trust…"
     printf '%s\n' "$EXISTING" > "$TMP/existing.pem"
     security add-trusted-cert -d -r trustRoot -p codeSign -k "$KEYCHAIN" "$TMP/existing.pem"
-    if security find-identity -v -p codesigning 2>/dev/null | grep -qF "$IDENTITY"; then
+    if has_valid_signing_identity; then
         echo "✓ '$IDENTITY' is now a valid signing identity."
         exit 0
     fi
@@ -68,7 +64,7 @@ security add-trusted-cert -d -r trustRoot -p codeSign -k "$KEYCHAIN" "$TMP/cert.
 
 # Verify rather than assume. Every failure mode this script has had so far
 # reported success and left nothing behind.
-if ! security find-identity -v -p codesigning 2>/dev/null | grep -qF "$IDENTITY"; then
+if ! has_valid_signing_identity; then
     echo "✗ '$IDENTITY' was imported but is still not a valid signing identity."
     echo "  Check: security find-identity -v -p codesigning"
     echo "  build.sh will keep falling back to ad-hoc signing until this is fixed."

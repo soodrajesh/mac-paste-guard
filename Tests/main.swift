@@ -180,6 +180,20 @@ check("redaction keeps the email domain for context", redacted.contains("@exampl
 check("redaction preserves surrounding prose", redacted.contains("disputes a charge"))
 check("redaction preserves the customer's question", redacted.contains("check CloudTrail"))
 
+// A weaker finding that merely starts earlier must never claim a span ahead
+// of a stronger finding that overlaps it — a location-first sort (an earlier
+// version of resolveOverlaps used one) would silently drop the critical
+// finding in favour of whichever one happened to start first.
+let overlapCandidates = [
+    Finding(kind: "weak", label: "Weak", severity: .medium,
+            nsRange: NSRange(location: 0, length: 10), matched: "", replacement: "[WEAK]"),
+    Finding(kind: "strong", label: "Strong", severity: .critical,
+            nsRange: NSRange(location: 5, length: 10), matched: "", replacement: "[STRONG]"),
+]
+let overlapResolved = Finding.resolveOverlaps(overlapCandidates)
+check("stronger overlapping finding wins over an earlier-starting weaker one",
+      overlapResolved.count == 1 && overlapResolved[0].kind == "strong")
+
 // Overlap safety: a card number is also a long digit run. Two detectors must
 // never both replace the same characters.
 let overlapping = DetectionEngine.standard.scan("card 4111 1111 1111 1111 here")

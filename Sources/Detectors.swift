@@ -32,19 +32,25 @@ struct Finding {
     /// on the same span (a card number is also a run of digits a weaker rule
     /// might claim) must not produce two redactions of the same characters —
     /// the second replace would corrupt the offsets of the first.
+    ///
+    /// Sorted by severity first, so a weaker finding that merely starts
+    /// earlier can never claim a span and block a stronger, later-starting
+    /// finding that overlaps it — sorting by location first (as an earlier
+    /// version of this did) would do exactly that, silently dropping the
+    /// critical finding in favour of the one next to it.
     static func resolveOverlaps(_ findings: [Finding]) -> [Finding] {
-        let ordered = findings.sorted { a, b in
-            if a.nsRange.location != b.nsRange.location { return a.nsRange.location < b.nsRange.location }
+        let candidates = findings.sorted { a, b in
+            if a.severity != b.severity { return a.severity > b.severity }
             if a.nsRange.length != b.nsRange.length { return a.nsRange.length > b.nsRange.length }
-            return a.severity > b.severity
+            return a.nsRange.location < b.nsRange.location
         }
         var kept: [Finding] = []
-        var consumedUpTo = 0
-        for f in ordered where f.nsRange.location >= consumedUpTo {
-            kept.append(f)
-            consumedUpTo = f.nsRange.location + f.nsRange.length
+        for candidate in candidates {
+            let overlapsKept = kept.contains { NSIntersectionRange($0.nsRange, candidate.nsRange).length > 0 }
+            guard !overlapsKept else { continue }
+            kept.append(candidate)
         }
-        return kept
+        return kept.sorted { $0.nsRange.location < $1.nsRange.location }
     }
 }
 

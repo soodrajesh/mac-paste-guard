@@ -17,10 +17,14 @@ final class PasteInterceptor {
     private var runLoopSource: CFRunLoopSource?
     private let engine = DetectionEngine.standard
 
-    /// Belt-and-braces companion to the marker: even if the field were
-    /// stripped somewhere in the event pipeline, a paste we initiated within
-    /// the last moment is never re-examined.
-    private var bypassUntil: Date = .distantPast
+    /// Belt-and-braces companion to the marker, for the case where
+    /// `eventSourceUserData` is stripped somewhere in the event pipeline.
+    /// Deliberately narrow: it only ever excuses the *next plain ⌘V*, not any
+    /// keystroke, and is consumed the instant that one event is seen. A
+    /// window that stayed open for its full duration and matched any keyDown
+    /// would let a second, genuinely sensitive paste from the user — landing
+    /// in the same half-second — skip scanning entirely.
+    private var expectingSyntheticPasteUntil: Date = .distantPast
 
     /// A decision is in flight; further ⌘V presses pass through rather than
     /// stacking panels on top of each other.
@@ -59,7 +63,14 @@ final class PasteInterceptor {
     }
 
     func disarm() {
-        if let tap { CGEvent.tapEnable(tap: tap, enable: false) }
+        if let tap {
+            CGEvent.tapEnable(tap: tap, enable: false)
+            // Invalidates the underlying mach port. Harmless today since
+            // disarm() only runs once at quit and the process exits right
+            // after, but arm()/disarm() cycling on a future permission-lost
+            // event would otherwise leak a port per cycle.
+            CFMachPortInvalidate(tap)
+        }
         if let runLoopSource { CFRunLoopRemoveSource(CFRunLoopGetCurrent(), runLoopSource, .commonModes) }
         tap = nil
         runLoopSource = nil
@@ -79,13 +90,10 @@ final class PasteInterceptor {
 
         guard type == .keyDown else { return Unmanaged.passUnretained(event) }
 
-        if event.getIntegerValueField(.eventSourceUserData) == Self.bypassMarker
-            || Date() < bypassUntil {
-            return Unmanaged.passUnretained(event)
-        }
-
         // Plain ⌘V only. ⌘⇧V and ⌘⌥⇧V belong to other tools (ClipKeep uses
-        // ⌘⇧V for its picker) and claiming them would break them.
+        // ⌘⇧V for its picker) and claiming them would break them. Established
+        // *before* the bypass checks below, so both of them can only ever
+        // excuse a ⌘V — never any other keystroke.
         let keyCode = event.getIntegerValueField(.keyboardEventKeycode)
         let flags = event.flags
         guard keyCode == 9,
@@ -93,6 +101,19 @@ final class PasteInterceptor {
               !flags.contains(.maskShift),
               !flags.contains(.maskAlternate),
               !flags.contains(.maskControl) else {
+            return Unmanaged.passUnretained(event)
+        }
+
+        if event.getIntegerValueField(.eventSourceUserData) == Self.bypassMarker {
+            return Unmanaged.passUnretained(event)
+        }
+
+        // Fallback path only — consumed the instant it's used, so it cannot
+        // excuse a *second* ⌘V. If the marker above already matched, this
+        // never triggers; it exists only for the rare case the field doesn't
+        // survive the event pipeline.
+        if Date() < expectingSyntheticPasteUntil {
+            expectingSyntheticPasteUntil = .distantPast
             return Unmanaged.passUnretained(event)
         }
 
@@ -149,14 +170,26 @@ final class PasteInterceptor {
         pasteboard.clearContents()
         pasteboard.setString(value, forType: .string)
 
-        destination.app.activate(options: [])
+        // If the destination has quit — or refuses reactivation — between the
+        // decision and now, do not synthesize ⌘V at all. Firing it anyway
+        // would type `value` into whatever app happens to be frontmost
+        // instead, which could be anything the user switched to while the
+        // panel was up. `value` is left on the pasteboard for a manual paste,
+        // which is the same place a normal ⌘V would have put it.
+        guard destination.app.activate(options: []), !destination.app.isTerminated else { return }
 
         // Two short hops: one for the destination app to become frontmost
         // again after the panel closes, one for the paste to be consumed
         // before the original clipboard is put back.
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { [weak self] in
             guard let self else { return }
-            self.bypassUntil = Date().addingTimeInterval(0.5)
+
+            // Re-verified right before typing: the 150ms gap is enough time
+            // for the user to have switched away on their own.
+            guard NSWorkspace.shared.frontmostApplication?.processIdentifier
+                    == destination.app.processIdentifier else { return }
+
+            self.expectingSyntheticPasteUntil = Date().addingTimeInterval(0.3)
             self.sendPaste()
 
             guard let original else { return }
