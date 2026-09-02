@@ -102,26 +102,48 @@ echo "Icon:  AppIcon.icns rendered from SF Symbol"
 ./test.sh >/dev/null && echo "Tests: detection core passing"
 
 SOURCES=$(find Sources -name '*.swift')
-swiftc -O -o "$APP/Contents/MacOS/$BIN" $SOURCES \
-  -framework AppKit -framework CoreGraphics -framework ApplicationServices -framework IOKit
+# --- Universal binary: build both slices, glue with lipo ---
+# A plain `swiftc` build only targets the host Mac's own architecture — fine
+# for local dev, but silently ships arm64-only to anyone running this on an
+# Intel Mac. Compiling each slice explicitly and combining them is what
+# `xcodebuild`'s ARCHS=$(ARCHS_STANDARD) does under the hood.
+MIN_OS="13.0"
+TMPBIN="$(mktemp -d)"
+for ARCH in arm64 x86_64; do
+  echo "Compiling $ARCH slice…"
+  swiftc -O -framework AppKit -framework CoreGraphics -framework ApplicationServices -framework IOKit \
+    -target "$ARCH-apple-macos$MIN_OS" \
+    -o "$TMPBIN/PasteGuard-$ARCH" \
+    $SOURCES
+done
+lipo -create -output "$APP/Contents/MacOS/PasteGuard" "$TMPBIN/PasteGuard-arm64" "$TMPBIN/PasteGuard-x86_64"
+rm -rf "$TMPBIN"
 
-# Sign with a stable local identity so macOS treats rebuilds as the same app.
-# An ad-hoc signature (--sign -) is just a hash of the raw binary with no
-# identity string, so the CDHash — and any TCC grant keyed to it — changes on
-# every rebuild. The app keeps its row in System Settings with the toggle
-# still on, but AXIsProcessTrusted() returns false and the tap never arms:
-# protection that looks enabled while checking nothing. Falls back to ad-hoc
-# with a warning if the cert hasn't been created yet.
-source "$(dirname "$0")/signing-common.sh"
-SIGN_IDENTITY="$SIGN_IDENTITY_NAME"
-if ! has_valid_signing_identity; then
-    echo "WARN: no local signing cert — falling back to ad-hoc. Permissions will"
-    echo "      need re-granting after every rebuild. Run ./setup-signing.sh once."
-    SIGN_IDENTITY="-"
+echo "Built $APP ($(lipo -archs "$APP/Contents/MacOS/PasteGuard"))"
+
+# --- Sign: hardened runtime + entitlements, no App Sandbox ---
+# A real Developer ID Application identity is used when present. That's what
+# notarization requires (see notarize.sh), and it also keeps TCC permission
+# grants stable across rebuilds, since the grant then keys off a signing
+# identity that no longer changes on every build.
+#
+# Falls back to ad-hoc when no Developer ID is in the keychain, so a fresh
+# clone still builds and runs locally. An ad-hoc build is local-only:
+# Gatekeeper blocks it on every other Mac, and its TCC grants reset on each
+# rebuild because the CDHash is just a hash of the raw binary.
+IDENTITY=$( (security find-identity -v -p codesigning 2>/dev/null | grep '"Developer ID Application' | head -1 | sed -E 's/.*"(.+)"/\1/') || true)
+if [ -z "$IDENTITY" ]; then
+  echo "No Developer ID Application identity in keychain — signing ad-hoc."
+  echo "  This build is local-only: Gatekeeper will block it on any other Mac."
+  echo "  With Apple Developer enrollment active: Xcode > Settings > Accounts"
+  echo "  > Manage Certificates > + > Developer ID Application, then rebuild."
+  IDENTITY="-"
 fi
-codesign --force --deep --sign "$SIGN_IDENTITY" "$APP"
+# No --deep: Apple deprecated it, and it signs any nested code with the
+# *outer* entitlements. These bundles have no nested code to sign anyway.
+codesign --force --options runtime --entitlements "$(dirname "$0")/PasteGuard.entitlements" --sign "$IDENTITY" "$APP"
+echo "Signed with: $IDENTITY (hardened runtime on)"
 
-echo "Built $APP"
 
 # --- Install to /Applications ---
 DEST="/Applications/$APP"
