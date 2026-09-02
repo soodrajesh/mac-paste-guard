@@ -1,5 +1,6 @@
 # Build output
 PasteGuard.app/
+*.dmg
 
 # macOS
 .DS_Store
